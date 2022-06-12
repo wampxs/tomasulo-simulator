@@ -1,7 +1,5 @@
 import random
 
-import numpy as np
-
 '''
 ---------------
 -TOMASULO-
@@ -46,15 +44,36 @@ Reservation Stations (Add/Sub e Mul/Div)
    em seus devidos tempos de clock.
 '''
 
+# Define o tempo de clock de cada operação
+clockTimeDict = {"LW":2,"SW":2,"ADD":2,"SUB":2,"MUL":10,"DIV":40}
+def printClockTimes():
+    for i in clockTimeDict.items():
+        print(i[0]+": "+str(i[1]))
+
+# Classe que descreve um registrador.
+# Possui um ID, o valor contido no registrador, e uma fila de IDs de ocupado
+# A fila recebe IDs únicos de instruções que desejam acessar o registrador
+# e garante o controle para que apenas a instrução no começo da fila manipule-o a cada dado momento.
 
 class Reg:
-    def __init__(self, value=None, busy=[]):
+    def __init__(self, regid, value=None, busy=[]):
+        self.regid = regid
         self.value = value
         self.busyIds = busy
 
     def toString(self):
-        return "[value: " + str(self.value) + ", busy: " + str(self.busyIds) + "]"
+        return "[id : " +str(self.regid)+", value: " + str(self.value) + ", busy: " + str(self.busyIds) + "]"
 
+    def appendBusyID(self,busyid):
+        array = []
+        array = self.busyIds.copy()
+        array.append(busyid)
+        self.busyIds = array.copy()
+    def popBusyID(self):
+        self.busyIds.pop(0)
+
+# A classe Instruction armazena todos os valores necessários para a realização correta de uma instrução.
+# Contém também um ID de ocupado, que é enviado a registradores para garantir sua execução exclusiva sobre o mesmo.
 
 class Instruction:
     def __init__(self, op, register, args1, args2):
@@ -74,13 +93,8 @@ class Instruction:
         self.isStartedDetect = False
         self.busyId = 0
         self.clocks = 0
-        if op == "LW" or op == "SW" or op == "ADD" or op == "SUB":
-            self.clocks = 2
-        elif op == "MUL":
-            self.clocks = 10
-        elif op == "DIV":
-            self.clocks = 40
-        self.clocksLeft = self.clocks
+        self.clocks = clockTimeDict[op]
+        self.clocksLeft = clockTimeDict[op]
 
     def toString(self):
         return "[op: " + str(self.op) + ", register: " + str(self.register) + ", args1: " + str(
@@ -99,6 +113,10 @@ class Instruction:
             self.isWrittenClock) + "]"
 
 
+# A classe Component descreve um componente do circuito, sendo capaz de armazenar instruções em um buffer
+# Cada componente executa as instruções em seu buffer paralelamente.
+# Caso o buffer esteja cheio, a instrução permanece na fila de instruções até liberar espaço para que ela seja enviada.
+
 class Component:
     def __init__(self, limit):
         self.queue = []
@@ -106,7 +124,6 @@ class Component:
 
     def enqueue(self, element):
         if len(self.queue) < self.limit:
-            # self.queue.append({"busyId": state, "element": element})
             self.queue.append(element)
         else:
             print("Component Full!")
@@ -114,68 +131,50 @@ class Component:
     def dequeue(self, index=0):
         self.queue.pop(index)
 
-
+# Cache simulada
 cacheMemory = []
+
+# Registradores (chave de "Fx":Reg(), com 'x' sendo o ID do registrador).
+
 FPRegisters = {}
 ARegisters = {}
-LBuffers = Component(3)
-SBuffers = Component(3)
-addStations = Component(3)
-mulStations = Component(2)
 
-mixedMEMComponent = Component(6)
-mixedALUComponent = Component(5)
+# Componentes
+
+mixedMEMComponent = Component(6) # Componente para operações de memória (LW/SW)
+mixedALUComponent = Component(5) # Componente para operações aritméticas (ADD/SUB/MUL/DIV)
+
+# Controle de Instruções
 
 instructions = []
 instructionQueue = []
 completedInstructionQueue = []
 
 
-def generateCache():
+# Gera uma cache aleatória de N elementos
+
+def generateCache(n):
     random.seed(1001)
-    for i in range(0, 100):
+    for i in range(0, n):
         cacheMemory.append(random.randint(1, 200))
 
+# Preenche as chaves de registradores com instâncias da classe Reg
 
-def generateComponents2():
+def generateComponents():
     for i in range(0, 6):
-        FPRegisters['F' + str(i)] = Reg()
+        FPRegisters['F' + str(i)] = Reg(i)
     for i in range(0, 4):
-        ARegisters['R' + str(i)] = Reg()
+        ARegisters['R' + str(i)] = Reg(i)
 
+# Imprime a Cache
 
 def printCache():
     for i in range(0, 100):
         print("["+str(i)+": "+ str(cacheMemory[i])+"]")
 
+# Imprime todos os componentes do circuito
 
 def printComponents():
-    print("-------Instruction Queue:-------")
-    for i in instructionQueue:
-        print(i.toString())
-    print("-------FP Registers:-------")
-    for i in FPRegisters.items():
-        print(str(i[0]) + ": " + str(i[1].toString()))
-    print("-------Address Registers:-------")
-    for i in ARegisters.items():
-        print(str(i[0]) + ": " + str(i[1].toString()))
-    print("-------Store Buffers:-------")
-    for i in SBuffers.queue:
-        print(i.toString())
-    print("-------Load Buffers:-------")
-    for i in LBuffers.queue:
-        print(i.toString())
-    print("-------Add/Sub Stations:-------")
-    for i in addStations.queue:
-        print(i.toString())
-    print("-------Mul/Div Stations:-------")
-    for i in mulStations.queue:
-        print(i.toString())
-    print("-------COMPLETED INSTRUCTIONS:-------")
-    for i in completedInstructionQueue:
-        print(i.toStringEco())
-
-def printComponents2():
     print("-------Instruction Queue:-------")
     for i in instructionQueue:
         print(i.toString())
@@ -195,11 +194,13 @@ def printComponents2():
     for i in completedInstructionQueue:
         print(i.toStringEco())
 
+# Interpreta uma string de instrução, transformando-a em um objeto Instruction funcional
 
 def parseInstruction(instruction):
     instructionArgs = str(instruction).split(" ")
     return Instruction(instructionArgs[0], instructionArgs[1], instructionArgs[2], instructionArgs[3])
 
+# Geração de Instruções
 
 def generateInstructions():
     instructions.append("LW F0 24 42")
@@ -214,6 +215,8 @@ def generateInstructions():
     instructions.append("ADD F1 F5 F2")
     for i in instructions:
         instructionQueue.append(parseInstruction(i))
+
+
 def generateInstructionsTest():
     instructions.append("LW F1 34 42")
     instructions.append("LW F2 45 45")
@@ -224,9 +227,11 @@ def generateInstructionsTest():
     for i in instructions:
         instructionQueue.append(parseInstruction(i))
 
+#/Geração de Instruções
 
-''' '''
+###
 
+# Interpreta o nome de um registrador passado em uma instrução, podendo ser um endereço de registrador ou número inteiro
 
 def convertReg(arg):
     if str(arg).__contains__("F"):
@@ -237,46 +242,52 @@ def convertReg(arg):
         number = int(arg)
     return number
 
-def parseReg(arg):
-    if str(arg).__contains__("F") or str(arg).__contains__("R"):
-        number = int(arg[1])
-    elif arg.type() == "int":
-        number = arg
-    return number
-
-def simulaInsta():
-    clocks = 0
-    while len(instructionQueue) > 0:
-        currArgs = parseInstruction(instructions[0])
-        if currArgs.op == "LW":
-            FPRegisters[currArgs.register].value = cacheMemory[int(currArgs.args1) + int(currArgs.args2)]
-        elif currArgs.op == "ADD":
-            FPRegisters[currArgs.register].value = convertReg(currArgs.args1) + convertReg(currArgs.args2)
-        elif currArgs.op == "SUB":
-            FPRegisters[currArgs.register].value = convertReg(currArgs.args1) - convertReg(currArgs.args2)
-        elif currArgs.op == "MUL":
-            FPRegisters[currArgs.register].value = convertReg(currArgs.args1) * convertReg(currArgs.args2)
-        elif currArgs.op == "DIV":
-            FPRegisters[currArgs.register].value = int(convertReg(currArgs.args1) / convertReg(currArgs.args2))
-        clocks += 1
-        print("-----------CLOCK " + str(clocks) + "-----------")
-        instructionQueue.pop(0)
-        printComponents()
-
+# Retorna um valor boolean que indica se a simulação finalizou ou não
 
 def checkNotEnd():
-    return len(instructionQueue) > 0 or len(LBuffers.queue) > 0 or len(SBuffers.queue) > 0 or len(
-        addStations.queue) > 0 or len(mulStations.queue) > 0
-
-def checkNotEnd2():
     return len(instructionQueue) > 0 or len(mixedMEMComponent.queue) > 0 or len(mixedALUComponent.queue) > 0
 
+# Encomenda uma instrução para um componente, caso haja espaço.
 
 def issueInstruction(component, instruction):
     if len(component.queue) < component.limit:
         instruction.isIssued = True
         component.enqueue(instruction)
         instructionQueue.pop(0)
+
+# Resgata instruções da fila e direciona-as para o componente correspondente
+
+def fetchInstructions(runningClocks):
+    # instruction fetcher
+    if len(instructionQueue) > 0:
+        currInstructionFetch = instructionQueue[0]
+        if currInstructionFetch.op == "LW":
+            currInstructionFetch.isIssuedClock = runningClocks
+            issueInstruction(mixedMEMComponent, currInstructionFetch)
+            # else stall
+        elif currInstructionFetch.op == "SW":
+            currInstructionFetch.isIssuedClock = runningClocks
+            issueInstruction(mixedMEMComponent, currInstructionFetch)
+            # else stall
+        elif currInstructionFetch.op == "ADD":
+            currInstructionFetch.isIssuedClock = runningClocks
+            issueInstruction(mixedALUComponent, currInstructionFetch)
+            # else stall
+        elif currInstructionFetch.op == "SUB":
+            currInstructionFetch.isIssuedClock = runningClocks
+            issueInstruction(mixedALUComponent, currInstructionFetch)
+            # else stall
+        elif currInstructionFetch.op == "MUL":
+            currInstructionFetch.isIssuedClock = runningClocks
+            issueInstruction(mixedALUComponent, currInstructionFetch)
+            # else stall
+        elif currInstructionFetch.op == "DIV":
+            currInstructionFetch.isIssuedClock = runningClocks
+            issueInstruction(mixedALUComponent, currInstructionFetch)
+            # else stall
+
+
+# Efetua a operação de uma instrução
 
 def tomasuloOperation(currBufferInst):
     targetRegister = FPRegisters[currBufferInst.register]
@@ -296,39 +307,41 @@ def tomasuloOperation(currBufferInst):
         else:
             targetRegister.value = 0
 
+# Comportamento do componente de instruções de memória.
+
 def tomasuloBehaviorMem(queue, currBufferInst, runningClocks, i):
     targetRegister = FPRegisters[currBufferInst.register]
     if currBufferInst.busyId == 0:  # reserva o lugar na fila do registrador
-        busyId = random.random()
+        busyId = random.random()    # gera um id único
         currBufferInst.busyId = busyId
-        FPRegisters[currBufferInst.register].busyIds.append(busyId)
-        # print("========SWITCHING BUSY TO " + str(busyId) + " FOR INSTR: "+ currBufferInst.toStringEco() +"===========")
-    elif targetRegister.busyIds[0] == currBufferInst.busyId:
-        if not currBufferInst.isStartedDetect:  # se não tiver começado
-            currBufferInst.isStartedDetect = True
-        else:
-            if not currBufferInst.isStarted:  # marca momento de start
-                currBufferInst.isStarted = True
-                currBufferInst.isStartedClock = runningClocks
-            if currBufferInst.clocksLeft > 0:  # se ainda está executando a operação
-                currBufferInst.clocksLeft -= 1
+        targetRegister.appendBusyID(busyId)
+    elif targetRegister.busyIds[0] == currBufferInst.busyId:    # se é a vez dessa instrução operar no registrador...
+        if not currBufferInst.isStarted:    # marca momento de start
+            currBufferInst.isStarted = True
+            currBufferInst.isStartedClock = runningClocks
+        if currBufferInst.clocksLeft > 0:   # se ainda está executando a operação
+            currBufferInst.clocksLeft -= 1
+        else:   # se já finalizou a operação...
+            if not currBufferInst.isFinished:   # marca momento de finish
+                currBufferInst.isFinished = True
+                currBufferInst.isFinishedClock = runningClocks
+                tomasuloOperation(currBufferInst)   # faz a operação
+            # libera registrador:
+            if not currBufferInst.isWrittenDetect:  # flag para marcar written no próximo clock
+                currBufferInst.isWrittenDetect = True
             else:
-                if not currBufferInst.isFinished:
-                    currBufferInst.isFinished = True
-                    currBufferInst.isFinishedClock = runningClocks
-                    tomasuloOperation(currBufferInst) # faz operação
-                # libera registrador:
-                if not currBufferInst.isWrittenDetect:  # flag para marcar written no próximo clock
-                    currBufferInst.isWrittenDetect = True
-                else:
-                    currBufferInst.isWritten = True
-                    currBufferInst.isWrittenClock = runningClocks
-                    FPRegisters[currBufferInst.register].busyIds.pop(0)
-                    currBufferInst.busyId = 0
-                    completedInstructionQueue.append(currBufferInst)
-                    queue.pop(i)
-                    i -= 1
+                currBufferInst.isWritten = True
+                currBufferInst.isWrittenClock = runningClocks
+                targetRegister.popBusyID()
+                currBufferInst.busyId = 0
+                completedInstructionQueue.append(currBufferInst)
+                queue.pop(i)
+                i -= 1
     return i
+
+
+# Comportamento do componente de instruções aritméticas.
+# Efetivamente igual ao comportamento de memória, exceto ser necessário reservar os 3 registradores da instrução
 
 
 def tomasuloBehaviorALU(queue, currBufferInst, runningClocks, i):
@@ -338,134 +351,38 @@ def tomasuloBehaviorALU(queue, currBufferInst, runningClocks, i):
     if currBufferInst.busyId == 0:  # reserva lugar na fila dos registradores
         busyId = random.random()
         currBufferInst.busyId = busyId
-        FPRegisters[currBufferInst.register].busyIds.append(busyId)
-        FPRegisters[currBufferInst.args1].busyIds.append(busyId)
-        FPRegisters[currBufferInst.args2].busyIds.append(busyId)
-        #print("========SWITCHING BUSY TO " + str(busyId) + " FOR INSTR: "+ currBufferInst.toStringEco() +"===========")
+        targetRegister.appendBusyID(busyId)
+        operandReg1.appendBusyID(busyId)
+        operandReg2.appendBusyID(busyId)
     elif targetRegister.busyIds[0] == currBufferInst.busyId and operandReg1.busyIds[0] == currBufferInst.busyId and operandReg2.busyIds[0] == currBufferInst.busyId:
-        if not currBufferInst.isStartedDetect:  # se não tiver começado
-            currBufferInst.isStartedDetect = True
-        else:  # marca momento de start
-            if not currBufferInst.isStarted:
-                currBufferInst.isStarted = True
-                currBufferInst.isStartedClock = runningClocks
-            if currBufferInst.clocksLeft > 0:  # se ainda está executando a operação
-                currBufferInst.clocksLeft -= 1
+        if not currBufferInst.isStarted:
+            currBufferInst.isStarted = True
+            currBufferInst.isStartedClock = runningClocks
+        if currBufferInst.clocksLeft > 0:  # se ainda está executando a operação
+            currBufferInst.clocksLeft -= 1
+        else:
+            if not currBufferInst.isFinished:
+                currBufferInst.isFinished = True
+                currBufferInst.isFinishedClock = runningClocks
+                tomasuloOperation(currBufferInst)
+            if not currBufferInst.isWrittenDetect:  # flag para marcar written no próximo clock
+                currBufferInst.isWrittenDetect = True
             else:
-                if not currBufferInst.isFinished:
-                    currBufferInst.isFinished = True
-                    currBufferInst.isFinishedClock = runningClocks
-                    tomasuloOperation(currBufferInst)
-                else:
-                    if not currBufferInst.isWrittenDetect:  # flag para marcar written no próximo clock
-                        currBufferInst.isWrittenDetect = True
-                    else:
-                        currBufferInst.isWritten = True
-                        currBufferInst.isWrittenClock = runningClocks
-                        FPRegisters[currBufferInst.register].busyIds.pop(0)
-                        FPRegisters[currBufferInst.args1].busyIds.pop(0)
-                        FPRegisters[currBufferInst.args2].busyIds.pop(0)
-                        currBufferInst.busyId = 0
-                        completedInstructionQueue.append(currBufferInst)
-                        queue.pop(i)
-                        i -= 1
+                currBufferInst.isWritten = True
+                currBufferInst.isWrittenClock = runningClocks
+                targetRegister.popBusyID()
+                operandReg1.popBusyID()
+                operandReg2.popBusyID()
+                currBufferInst.busyId = 0
+                completedInstructionQueue.append(currBufferInst)
+                queue.pop(i)
+                i -= 1
     return i
 
-def fetchInstructions1(runningClocks):
-    # instruction fetcher
-    if len(instructionQueue) > 0:
-        currInstructionFetch = instructionQueue[0]
-        if currInstructionFetch.op == "LW":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(LBuffers, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "SW":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(SBuffers, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "ADD":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(addStations, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "SUB":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(addStations, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "MUL":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mulStations, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "DIV":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mulStations, currInstructionFetch)
-            # else stall
 
-def fetchInstructions2(runningClocks):
-    # instruction fetcher
-    if len(instructionQueue) > 0:
-        currInstructionFetch = instructionQueue[0]
-        if currInstructionFetch.op == "LW":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mixedMEMComponent, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "SW":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mixedMEMComponent, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "ADD":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mixedALUComponent, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "SUB":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mixedALUComponent, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "MUL":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mixedALUComponent, currInstructionFetch)
-            # else stall
-        elif currInstructionFetch.op == "DIV":
-            currInstructionFetch.isIssuedClock = runningClocks
-            issueInstruction(mixedALUComponent, currInstructionFetch)
-            # else stall
+# Efetua execução dos componentes do circuito
 
-def runComponents1(runningClocks):
-    # LBuffer execution
-    if len(LBuffers.queue) > 0:
-        i = 0
-        while i < len(LBuffers.queue):
-            currBufferInst = LBuffers.queue[i]
-            i = tomasuloBehaviorMem(LBuffers.queue, currBufferInst, runningClocks, i)
-            i += 1
-    # /LBuffer
-
-    # SBuffer execution
-    if len(SBuffers.queue) > 0:
-        i = 0
-        while i < len(SBuffers.queue):
-            currBufferInst = SBuffers.queue[i]
-            i = tomasuloBehaviorMem(SBuffers.queue, currBufferInst, runningClocks, i)
-            i += 1
-    # /SBuffer
-
-    # addStations execution
-    if len(addStations.queue) > 0:
-        i = 0
-        while i < len(addStations.queue):
-            currBufferInst = addStations.queue[i]
-            i = tomasuloBehaviorALU(addStations.queue, currBufferInst, runningClocks, i)
-            i += 1
-    # /addStations
-
-    # mulStations execution
-    if len(mulStations.queue) > 0:
-        i = 0
-        while i < len(mulStations.queue):
-            currBufferInst = mulStations.queue[i]
-            i = tomasuloBehaviorALU(mulStations.queue, currBufferInst, runningClocks, i)
-            i += 1
-    # /mulStations
-def runComponents2(runningClocks):
+def runComponents(runningClocks):
     if len(mixedMEMComponent.queue) > 0:
         i = 0
         while i < len(mixedMEMComponent.queue):
@@ -479,36 +396,33 @@ def runComponents2(runningClocks):
             i = tomasuloBehaviorALU(mixedALUComponent.queue, currBufferInst, runningClocks, i)
             i += 1
 
+# Função que contém a simulação
+
 def simulasulo():
     runningClocks = 1
-    while checkNotEnd2() and runningClocks < 200:
-
-        fetchInstructions2(runningClocks)
-        runComponents2(runningClocks)
-
-
+    while checkNotEnd():
+        fetchInstructions(runningClocks)
+        runComponents(runningClocks)
         print("-----------CLOCK " + str(runningClocks) + "-----------")
-        printComponents2()
+        printComponents()
         runningClocks += 1
 
 
+# Função que contém todos os procedimentos para a conclusão correta da simulação
+
 def app():
-    generateCache()
-    generateComponents2()
-    generateInstructions()
+    generateCache(100)
+    generateComponents()
+    generateInstructionsTest()
     printCache()
     FPRegisters["F4"].value = 2
     print("-----------CLOCK 0-----------")
     printComponents()
     simulasulo()
+    print("\n")
+    printClockTimes()
 
-#DRIVER
+
+# DRIVER
+
 app()
-
-
-# --
-
-# PRECISA FAZER O BUSY DO REGISTRADOR SER UMA FILA DE BUSYS DAS OPERAÇÕES CONFORME ELAS CHEGAM PRA REQUISITAR O REGISTRADOR.
-#feito
-
-# POR QUÊ TODOS OS REGISTRADORES RECEBEM OS BUSYS IGUALEMENTE???????????????????
